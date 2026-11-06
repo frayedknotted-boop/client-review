@@ -5,6 +5,16 @@
  * Usage:
  *   ReviewWidget.init({ container: '#video-review-widget' });
  *
+ * On a page that serves everyone's reviews (not one sitting next to the
+ * editor's videos folder) add hosted: true. A video link that is only a path
+ * (videos/cut.mp4) is then refused with a clear message instead of being
+ * looked for on that website:
+ *   ReviewWidget.init({ container: '#video-review-widget', hosted: true });
+ *
+ * Video links that can never play in a page (Google Drive, OneDrive,
+ * WeTransfer, YouTube and other share pages, http:// on an https page, a
+ * file on the editor's computer) are explained before the video is loaded.
+ *
  * Files: dailyRushes client review format 1 (see review-format.md). The
  * editor sends a review file ("kind": "review"); the client exports a
  * comments file ("kind": "comments") with their comments and a "check"
@@ -69,6 +79,7 @@ const ReviewWidget = (() => {
   let configEditorMessage = '';
   let configEditorNotes = '';
   let fileKind = 'review';   // "review" or "comments": what was opened
+  let hosted = false;        // init({ hosted: true }): the page is not next to the editor's videos folder
 
   // Problems the client was warned about. Written into the comments file's
   // check.warnings so the editor's tools know. Each: { type, message,
@@ -902,7 +913,7 @@ const ReviewWidget = (() => {
     fileKind = data.kind;
     projectName = data.project;
     clientName = data.client;
-    videoSrc = data.video.trim();
+    videoSrc = fixVideoLink(data.video);
     configFrameRate = data.frameRate;
     rate = exactRate(configFrameRate);
     fps = Math.round(data.fps) || Math.round(rate) || 24;
@@ -921,6 +932,76 @@ const ReviewWidget = (() => {
     configEditorMessage = data.editorMessage;
     configEditorNotes = data.editorNotes;
     videoSecondsSeen = null;
+  }
+
+  // ─── video link ─────────────────────────────────────────────────────
+
+  // The same tidy-up as markernotes-creator's normaliseVideoUrl and Marker
+  // Edits' Send to Client, for files that were edited by hand.
+  function fixVideoLink(url) {
+    url = String(url || '').trim();
+    if (!url) return '';
+    // A web address typed without https:// (www.site.com/v.mp4, dropbox.com/...).
+    // A path (videos/cut.mp4) is left alone: its first part has no dot before a slash.
+    if (!/^[a-z][a-z0-9+.-]*:/i.test(url) && !/^\/\//.test(url) &&
+        (/^www\./i.test(url) || /^[^\/]+\.[^\/]+\//.test(url))) {
+      url = 'https://' + url;
+    }
+    // Dropbox: ?dl=0 opens Dropbox's preview page, raw=1 plays the file
+    if (/(^|\.)dropbox\.com$/i.test(hostOf(url))) {
+      url = url.replace(/([?&])dl=[01]/, '$1raw=1');
+    }
+    return url;
+  }
+
+  function hostOf(url) {
+    try { return new URL(url, location.href).hostname.toLowerCase(); } catch (_) { return ''; }
+  }
+
+  // Links that can never play in this page, found before the video is asked
+  // for. Returns a message for the client, or ''.
+  function videoLinkProblem(url) {
+    const hasScheme = /^[a-z][a-z0-9+.-]*:/i.test(url) || /^\/\//.test(url);
+    const onWeb = /^https?:$/.test(location.protocol);
+
+    if (!hasScheme) {
+      if (hosted) {
+        return 'The video link in this review is not a full web address, so this page cannot find the video. ' +
+          'The video has to be online, with a link that starts with https:// (for example a Dropbox link ending in raw=1, ' +
+          'or a link to the video on the editor\'s own website).';
+      }
+      return '';
+    }
+    let target;
+    try { target = new URL(url, location.href); } catch (_) {
+      return 'The video link in this review is not a valid web address.';
+    }
+    if (target.protocol === 'file:' && onWeb) {
+      return 'The video link points to a file on the editor\'s computer, which a web page cannot open. ' +
+        'The video has to be online, with a link that starts with https://.';
+    }
+    if (target.protocol === 'http:' && location.protocol === 'https:') {
+      return 'The video link starts with http:// rather than https://, and browsers block that on a secure page. ' +
+        'If the video\'s host supports https://, the same link starting with https:// should work.';
+    }
+
+    const host = target.hostname.toLowerCase();
+    const path = target.pathname;
+    const is = (domain) => host === domain || host.endsWith('.' + domain);
+    let service = '';
+    if (is('drive.google.com') && !/^\/uc\b/.test(path)) service = 'Google Drive';
+    else if (is('docs.google.com')) service = 'Google Drive';
+    else if (is('1drv.ms') || is('onedrive.live.com')) service = 'OneDrive';
+    else if (is('sharepoint.com') && !/[?&]download=1\b/.test(target.search)) service = 'OneDrive / SharePoint';
+    else if (is('wetransfer.com') || is('we.tl')) service = 'WeTransfer';
+    else if (is('youtube.com') || is('youtu.be')) service = 'YouTube';
+    else if (is('vimeo.com') && !/\.(mp4|m4v|mov|webm)$/i.test(path)) service = 'Vimeo';
+    else if (is('icloud.com')) service = 'iCloud';
+    if (service) {
+      return 'This is a ' + service + ' page link. It opens ' + service + '\'s own page, not the video file, so it cannot play here. ' +
+        'Links that work: Dropbox (ending in raw=1), or a direct link to the .mp4 file on a website or file host.';
+    }
+    return '';
   }
 
   // ─── warnings ───────────────────────────────────────────────────────
@@ -1564,7 +1645,9 @@ const ReviewWidget = (() => {
 
     // video
     const videoWrap = el('div', { className: 'vrw-video-wrap' });
-    video = el('video', { src: videoSrc, preload: 'auto', playsinline: '', 'webkit-playsinline': '' });
+    const linkProblem = videoLinkProblem(videoSrc);
+    video = el('video', { preload: 'auto', playsinline: '', 'webkit-playsinline': '' });
+    if (!linkProblem) video.src = videoSrc;  // a link that can't play isn't asked for
     video.addEventListener('timeupdate', updateProgress);
     video.addEventListener('loadedmetadata', () => {
       updateProgress();
@@ -1721,6 +1804,7 @@ const ReviewWidget = (() => {
     containerEl.innerHTML = '';
     containerEl.appendChild(root);
     publishPosition();
+    if (linkProblem) showVideoErrorBanner(root, linkProblem);
   }
 
   // ─── favicon ────────────────────────────────────────────────────────
@@ -1763,6 +1847,7 @@ const DEFAULT_FAVICON_SVG = 'data:image/svg+xml,' + encodeURIComponent(
   function init(opts) {
     injectStyles();
     injectFavicon(opts.favicon);
+    hosted = !!opts.hosted;
 
     containerEl = typeof opts.container === 'string'
       ? document.querySelector(opts.container)
