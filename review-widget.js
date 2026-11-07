@@ -65,6 +65,7 @@ const ReviewWidget = (() => {
   let loadedInfo = null;     // set when a comments file was loaded: { count, client, exportDate }
   let docEventsBound = false; // document-level listeners are added once, not on every rebuild
   let dragging = false;       // progress-bar scrub in progress
+  let playPauseBtn = null;    // one button: shows Pause while playing, Play while stopped
 
   // config round-trip fields (carried from editor's JSON → client export)
   let configTimeline = '';
@@ -344,6 +345,7 @@ const ReviewWidget = (() => {
       .vrw-video-wrap video {
         width: 100%;
         display: block;
+        cursor: pointer;
       }
 
       /* ── loading overlay ── */
@@ -449,6 +451,8 @@ const ReviewWidget = (() => {
         white-space: nowrap;
       }
       .vrw-btn:hover { background: #1a6ad4; }
+      /* Same width as Play or Pause, so the buttons beside it don't shift */
+      .vrw-btn-play { min-width: 6.5em; }
       .vrw-btn-secondary {
         background: #444;
       }
@@ -1572,6 +1576,27 @@ const ReviewWidget = (() => {
     placeBanner(root, banner);
   }
 
+  // ─── play / pause ───────────────────────────────────────────────────
+
+  function togglePlay() {
+    if (!video) return;
+    if (video.paused) {
+      // No video (a link that can't play) or one that failed: the banner
+      // already says why, so a refused play() needn't reach the console.
+      const p = video.play();
+      if (p && p.catch) p.catch(() => {});
+    } else {
+      video.pause();
+    }
+  }
+
+  function updatePlayButton() {
+    if (!playPauseBtn) return;
+    const playing = !!video && !video.paused && !video.ended;
+    playPauseBtn.textContent = playing ? '⏸ Pause' : '⏵ Play';
+    playPauseBtn.title = playing ? 'Pause (Space)' : 'Play (Space)';
+  }
+
   // ─── keyboard shortcuts ─────────────────────────────────────────────
 
   function handleKeys(e) {
@@ -1579,7 +1604,7 @@ const ReviewWidget = (() => {
     switch (e.key) {
       case ' ':
         e.preventDefault();
-        video.paused ? video.play() : video.pause();
+        togglePlay();
         break;
       case 'ArrowLeft':
         e.preventDefault();
@@ -1657,6 +1682,12 @@ const ReviewWidget = (() => {
     video.addEventListener('error', handleVideoError);
     video.addEventListener('pause', publishPosition);
     video.addEventListener('seeked', updateProgress);
+    // The play/pause button follows the video, however it was started or stopped
+    video.addEventListener('play', updatePlayButton);
+    video.addEventListener('pause', updatePlayButton);
+    video.addEventListener('ended', updatePlayButton);
+    // Clicking the picture plays and pauses, as in most players
+    video.addEventListener('click', togglePlay);
 
     // buffering events
     video.addEventListener('waiting', () => showLoading(true));
@@ -1691,9 +1722,16 @@ const ReviewWidget = (() => {
 
     // controls
     timecodeDisplay = el('span', { className: 'vrw-timecode', textContent: '00:00:00:00' });
+    playPauseBtn = el('button', {
+      className: 'vrw-btn vrw-btn-play',
+      onClick: () => {
+        togglePlay();
+        playPauseBtn.blur(); // so Space afterwards isn't also a click on this button
+      }
+    });
+    updatePlayButton();
     const controls = el('div', { className: 'vrw-controls' }, [
-      el('button', { className: 'vrw-btn', textContent: '⏵ Play', onClick: () => video.play() }),
-      el('button', { className: 'vrw-btn', textContent: '⏸ Pause', onClick: () => video.pause() }),
+      playPauseBtn,
       el('button', { className: 'vrw-btn vrw-btn-secondary', textContent: '◂ Frame', onClick: stepBack }),
       el('button', { className: 'vrw-btn vrw-btn-secondary', textContent: 'Frame ▸', onClick: stepForward }),
       timecodeDisplay,
