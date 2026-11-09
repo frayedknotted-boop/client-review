@@ -714,6 +714,16 @@ const ReviewWidget = (() => {
       }
 
       /* ── keyboard help ── */
+      .vrw-tc-note {
+        padding: 8px 12px 0;
+        background: #252525;
+        border-top: 1px solid #333;
+        font-size: 12px;
+        color: #999;
+      }
+      .vrw-tc-note + .vrw-keyboard-help {
+        border-top: none;
+      }
       .vrw-keyboard-help {
         padding: 8px 12px;
         background: #252525;
@@ -1769,6 +1779,14 @@ const ReviewWidget = (() => {
     commentList = el('ul', { className: 'vrw-comment-list' });
     root.appendChild(commentList);
     renderComments();
+
+    // What the timecodes count from, so the client and editor read the same
+    // numbers (editors start timelines at 00:00:00:00 or 01:00:00:00).
+    root.appendChild(el('div', {
+      className: 'vrw-tc-note',
+      textContent: 'Timecodes match your editor\'s timeline: ' + (configFrameRate || String(fps)) + ' fps' +
+        (dropFrame ? ' drop-frame' : '') + ', starting at ' + framesToTC(startFrame, fps, dropFrame) + '.'
+    }));
 
     // keyboard help
     const kbHelp = el('div', { className: 'vrw-keyboard-help' });
